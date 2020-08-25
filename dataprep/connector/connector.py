@@ -102,7 +102,7 @@ class Connector:
         self._storage = {}
         self._concurrency = _concurrency
         self._jenv = Environment(undefined=StrictUndefined)
-        self._throttler = OrderedThrottler(_concurrency)
+        self._throttler = Throttler(_concurrency)
 
     async def query(  # pylint: disable=too-many-locals
         self,
@@ -347,7 +347,7 @@ class Connector:
         kwargs: Dict[str, Any],
         *,
         _client: ClientSession,
-        _throttler: ThrottleSession,
+        _throttler: OrderedThrottleSession,
         _page: int = 0,
         _allowed_page: Optional[Ref[int]] = None,
         _limit: Optional[int] = None,
@@ -412,35 +412,37 @@ class Connector:
             if _anchor is not None:
                 req_data["params"][anchor] = _anchor
 
-        await _throttler.acquire(_page)
+        async with _throttler.acquire(_page) as cancel:
 
-        if _allowed_page is not None and int(_allowed_page) <= _page:
-            # cancel current throttler counter since the request is not sent out
-            _throttler.release()
-            return None
+            if _allowed_page is not None and int(_allowed_page) <= _page:
+                # cancel current throttler counter since the request is not sent out
+                cancel()
+                return None
 
-        async with _client.request(
-            method=method,
-            url=url,
-            headers=req_data["headers"],
-            params=req_data["params"],
-            json=req_data.get("json"),
-            data=req_data.get("data"),
-            cookies=req_data["cookies"],
-        ) as resp:
-            if resp.status != 200:
-                raise RequestError(status_code=resp.status, message=await resp.text())
-            content = await resp.text()
-            df = table.from_response(content)
+            async with _client.request(
+                method=method,
+                url=url,
+                headers=req_data["headers"],
+                params=req_data["params"],
+                json=req_data.get("json"),
+                data=req_data.get("data"),
+                cookies=req_data["cookies"],
+            ) as resp:
+                if resp.status != 200:
+                    raise RequestError(
+                        status_code=resp.status, message=await resp.text()
+                    )
 
-            if len(df) == 0 and _allowed_page is not None and _page is not None:
-                _allowed_page.set(_page)
-                df = None
+                df = table.from_response(await resp.text())
 
-            if _raw:
-                return df, resp
-            else:
-                return df
+                if len(df) == 0 and _allowed_page is not None and _page is not None:
+                    _allowed_page.set(_page)
+                    df = None
+
+                if _raw:
+                    return df, resp
+                else:
+                    return df
 
 
 def populate_field(  # pylint: disable=too-many-branches
