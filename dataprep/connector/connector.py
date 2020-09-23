@@ -79,6 +79,8 @@ class Connector:
     _concurrency: float
     _jenv: Environment
     _throttler: Throttler
+    start_quota = None
+    current_quota = None
 
     def __init__(
         self,
@@ -434,17 +436,22 @@ class Connector:
                     cookies=req_data["cookies"],
                 ) as resp:
 
-                    # if "ratelimit-resettime" in resp.headers:
-                    # print(
-                    #     "reset",
-                    #     resp.headers["ratelimit-resettime"],
-                    #     "limit",
-                    #     resp.headers["ratelimit-dailylimit"],
-                    #     "remaining",
-                    #     resp.headers["ratelimit-remaining"],
-                    # )
-                    # self.rl_remaining = resp.headers["ratelimit-remaining"]
+                    if "ratelimit-resettime" in resp.headers:
+                        # print(
+                        #     "reset",
+                        #     resp.headers["ratelimit-resettime"],
+                        #     "limit",
+                        #     resp.headers["ratelimit-dailylimit"],
+                        #     "remaining",
+                        #     resp.headers["ratelimit-remaining"],
+                        # )
+                        if self.start_quota is None:
+                            self.start_quota = resp.headers["ratelimit-remaining"]
+                        self.current_quota = resp.headers["ratelimit-remaining"]
+
                     if resp.status == 429:
+                        print(await resp.text())
+                        print(resp.header)
                         fail()
                         # warn(
                         #     f"HTTP 429 error, decreasing the concurrency level to {_throttler.req_per_window}",
